@@ -150,7 +150,7 @@
   <div id="screen-join" class="screen">
     <h1 style="margin:0;font-size:22px;">Join Game</h1>
     <input id="codeInput" maxlength="4" placeholder="CODE" autocapitalize="characters" autocomplete="off" inputmode="text">
-    <input id="nameInput" maxlength="16" placeholder="Your name (optional)">
+    <input id="nameInput" maxlength="16" placeholder="Your name">
     <button id="joinBtn">Join</button>
     <div id="joinError" class="error"></div>
   </div>
@@ -725,6 +725,12 @@
   function attemptAutoJoinFromHash() {
     const hash = (location.hash || '').slice(1).toUpperCase();
     if (CODE_RE.test(hash)) {
+      // No saved name yet: stop on the join form (code pre-filled) so the player picks one —
+      // names are what the leaderboard shows, and "Player N" fallbacks would collide.
+      if (!state.name) {
+        codeInput.value = hash;
+        return false;
+      }
       state.code = hash;
       state.autoJoin = true;
       // Fixes a real gap: this used to call connect() with no visible change at all, so a QR
@@ -743,6 +749,10 @@
     const code = codeInput.value.trim().toUpperCase();
     if (!CODE_RE.test(code)) {
       joinError.textContent = 'Enter the 4-character code shown on the TV.';
+      return;
+    }
+    if (!nameInput.value.trim()) {
+      joinError.textContent = 'Enter your name — it shows on the scoreboard.';
       return;
     }
     joinError.textContent = '';
