@@ -1,0 +1,48 @@
+{
+    "schemaVersion": 1,
+    "generator": "dsb.gamingcouch.unity",
+    "identity": {
+        "platform": "unity",
+        "packageName": "com.dsb.gamingcouch",
+        "packageVersion": "0.1.0-alpha.5",
+        "gameProtocolVersion": 1
+    },
+    "buildEnvironment": {
+        "unityEditorVersion": "6000.7.0b5",
+        "target": "WebGL",
+        "targetGroup": "WebGL",
+        "webGL": {
+            "template": "PROJECT:LanCouch",
+            "settings": {
+                "il2CppCodeGeneration": "OptimizeSize",
+                "managedStrippingLevel": "High",
+                "stripUnusedMeshComponents": true,
+                "dataCaching": true,
+                "compressionFormat": "Disabled",
+                "exceptionSupport": "ExplicitlyThrownExceptionsOnly",
+                "debugSymbolMode": "Off",
+                "webAssembly2023": true,
+                "developmentBuild": false,
+                "codeOptimization": "DiskSizeLTO"
+            }
+        },
+        "host": {
+            "editorPlatform": "WindowsEditor",
+            "osFamily": "Windows",
+            "operatingSystem": "Windows 11  (10.0.26100)"
+        }
+    },
+    "buildResult": {
+        "capturedAtUtc": "2026-10-21T09:45:00Z",
+        "result": "Succeeded",
+        "totalSizeBytes": 0,
+        "totalTimeSeconds": 0.0,
+        "totalWarnings": 815,
+        "totalErrors": 0,
+        "guid": "a3b76885ddd2493dac1611354cd2c5b1",
+        "outputPath": ".",
+        "outputPathKind": "buildOutputRelative",
+        "outputPathRedacted": false,
+        "outputPathRedactionReason": ""
+    }
+}

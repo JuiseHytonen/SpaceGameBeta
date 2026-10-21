@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>App</title>
+  <style>
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #111318;
+      color: #f4f6fa;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #app-root,
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    #app-root {
+      position: fixed;
+      inset: 0;
+      display: flex;
+    }
+
+    #game-canvas {
+      display: block;
+      background: #111318;
+      outline: none;
+    }
+
+    #status {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: #111318;
+      pointer-events: none;
+    }
+
+    #status[hidden] {
+      display: none;
+    }
+
+    .status-panel {
+      width: min(320px, 100%);
+      display: grid;
+      gap: 12px;
+      text-align: center;
+    }
+
+    .progress-track {
+      height: 4px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(244, 246, 250, 0.18);
+    }
+
+    .progress-fill {
+      width: 100%;
+      height: 100%;
+      transform: scaleX(0);
+      transform-origin: left center;
+      background: #f4f6fa;
+      transition: transform 160ms ease;
+    }
+
+    #status-label {
+      min-height: 20px;
+      margin: 0;
+      color: rgba(244, 246, 250, 0.78);
+      font-size: 14px;
+      line-height: 20px;
+    }
+
+    #error-message {
+      display: none;
+      margin: 0;
+      color: #ffb4a8;
+      font-size: 14px;
+      line-height: 20px;
+      overflow-wrap: anywhere;
+    }
+
+    #status.is-error .progress-track,
+    #status.is-error #status-label {
+      display: none;
+    }
+
+    #status.is-error #error-message {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div id="app-root">
+    <canvas id="game-canvas" tabindex="-1"></canvas>
+  </div>
+
+  <div id="status" role="status" aria-live="polite">
+    <div class="status-panel">
+      <div class="progress-track" aria-hidden="true">
+        <div id="progress-fill" class="progress-fill"></div>
+      </div>
+      <p id="status-label">Loading 0%</p>
+      <p id="error-message"></p>
+    </div>
+  </div>
+
+  <!-- Hosted builds ship lancouch-config.js ({signalUrl: "wss://..."}), which switches the bridge
+       below from "WebSocket to a LAN relay on this origin" to "this tab IS the room, phones connect
+       over WebRTC via a signaling server". Absent (404) = the original LAN-relay behaviour. -->
+  <script src="lancouch-config.js" onerror="void 0"></script>
+
+  <script>
+    // ────────────────────────────────────────────────────────────────────────
+    // window.LanCouchBridge — must exist before the Unity loader script below
+    // is appended, so it's guaranteed present by Unity's first Awake.
+    //
+    // This is a pure bridge, not a UI: the QR code, room code, roster, and
+    // Start button all live in Unity's own UI now (LanCouchLobbyPanel), so
+    // that one piece of UI code renders identically in the Editor (via
+    // LanCouchEditorClient) and in a WebGL build (via this bridge) — see
+    // Assets/CollapseGame/LanCouch/LanCouchLobbyPanel.cs. This file only:
+    //   - owns the WebSocket connection (registered as the "host" role —
+    //     see tools/lancouch/server.js's protocol doc comment)
+    //   - maintains the flat seat table LanCouch.jslib's PollSnapshot reads
+    //   - relays EVERY control message in both directions across the
+    //     JS/Unity boundary (unlike before, when only "started" crossed —
+    //     the lobby panel now needs roster/lobby/seatLeft too)
+    //
+    // "LanCouchRuntime" below must match LanCouchRuntime.BridgeObjectName in
+    // Assets/CollapseGame/LanCouch/LanCouchRuntime.cs exactly — SendMessage
+    // matches by GameObject name, and there is no compile-time link between
+    // this file and that constant.
+    // ────────────────────────────────────────────────────────────────────────
+    (function () {
+      const BRIDGE_TARGET_OBJECT = "LanCouchRuntime";
+      const MAX_SEATS = 6;
+      const BYTES_PER_SEAT = 8;
+      const STALE_MS = 1500;
+      const RECONNECT_BASE_MS = 300;
+      const RECONNECT_MAX_MS = 5000;
+
+      const rawTable = new Uint8Array(MAX_SEATS * BYTES_PER_SEAT);
+      const lastUpdate = new Float64Array(MAX_SEATS); // performance.now() per seat, 0 = never
+      const outTable = new Uint8Array(MAX_SEATS * BYTES_PER_SEAT); // staleness-adjusted copy handed to Unity
+
+      let ws = null;
+      let connected = false;
+      let reconnectAttempt = 0;
+      let unityInstance = null;
+      const pendingControlMessages = []; // queued until Unity finishes loading — see setUnityInstance
+
+      function wsUrl() {
+        return "ws://" + location.host + "/ws";
+      }
+
+      function connect() {
+        let socket;
+        try {
+          socket = new WebSocket(wsUrl());
+        } catch (e) {
+          scheduleReconnect();
+          return;
+        }
+        socket.binaryType = "arraybuffer";
+        ws = socket;
+        socket.onopen = function () {
+          connected = true;
+          reconnectAttempt = 0;
+          socket.send(JSON.stringify({ type: "host" }));
+        };
+        socket.onmessage = function (ev) {
+          if (typeof ev.data === "string") {
+            forwardToUnity(ev.data);
+          } else {
+            handleInputFrame(new Uint8Array(ev.data));
+          }
+        };
+        socket.onclose = function () {
+          connected = false;
+          scheduleReconnect();
+        };
+        socket.onerror = function () {
+          try { socket.close(); } catch (e) { /* ignore */ }
+        };
+      }
+
+      function scheduleReconnect() {
+        reconnectAttempt++;
+        const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(1.6, reconnectAttempt));
+        setTimeout(connect, delay);
+      }
+
+      function handleInputFrame(bytes) {
+        if (bytes.length !== BYTES_PER_SEAT) return;
+        const seat = bytes[0];
+        if (seat >= MAX_SEATS) return;
+        rawTable.set(bytes, seat * BYTES_PER_SEAT);
+        lastUpdate[seat] = performance.now();
+      }
+
+      function forwardToUnity(json) {
+        if (unityInstance) {
+          unityInstance.SendMessage(BRIDGE_TARGET_OBJECT, "OnLanCouchControl", json);
+        } else {
+          pendingControlMessages.push(json);
+        }
+      }
+
+      // ── Hosted mode: this tab is the room ────────────────────────────────────
+      // Room logic is tools/lancouch/room.js (the same code server.js runs for the LAN relay).
+      // Phones reach it over WebRTC; the signaling server (tools/lancouch-signal/) only relays the
+      // SDP handshake. Every phone is a room "conn" backed by two DataChannels:
+      //   ctrl  (reliable)              JSON control messages  -> room.handleControlMessage
+      //   input (unordered, 0 retries)  8-byte input frames    -> room.handleInputFrame
+      // and Unity itself is the room's "host" conn, via the local adapter below.
+      const RTC = window.LANCOUCH_CONFIG && window.LANCOUCH_CONFIG.signalUrl ? window.LANCOUCH_CONFIG : null;
+      const RTC_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+      const ICE_GATHER_CAP_MS = 2500;
+      const HANDSHAKE_TIMEOUT_MS = 20000;
+      const SESSION_KEY = "lancouch.room"; // {code, secret} — lets a page reload reclaim the same code
+
+      let roomApi = null;
+      let signal = null;
+      let signalStatus = "reconnecting"; // "ok" | "reconnecting" | "signal-unreachable"
+      let roomCode = null;
+      let lastJoinInfoJson = null;
+      const rtcPeers = new Map(); // peerId -> phone conn
+      const unityHostConn = {};   // the room's host conn: Unity, reached through forwardToUnity/rawTable
+
+      function roomSendJson(conn, obj) {
+        if (conn === unityHostConn) { forwardToUnity(JSON.stringify(obj)); return; }
+        if (conn.ctrl && conn.ctrl.readyState === "open") conn.ctrl.send(JSON.stringify(obj));
+      }
+
+      function roomSendBinary(conn, bytes) {
+        if (conn === unityHostConn) handleInputFrame(bytes); // phones/spectators never receive frames
+      }
+
+      function publishJoinInfo() {
+        // Sent even before a room exists (empty code) so Unity can show "can't reach the server"
+        // instead of an endless "loading" if the very first signaling connection never succeeds.
+        const joinUrl = roomCode ? new URL("c.html", location.href).href + "#" + roomCode : "";
+        lastJoinInfoJson = JSON.stringify({ type: "joinInfo", joinUrl: joinUrl, code: roomCode || "", status: signalStatus });
+        // Coalesced: only the latest matters, so it never piles up in pendingControlMessages.
+        if (unityInstance) forwardToUnity(lastJoinInfoJson);
+      }
+
+      function setSignalStatus(status) {
+        if (status === signalStatus && lastJoinInfoJson) return;
+        signalStatus = status;
+        publishJoinInfo();
+      }
+
+      function closePeer(conn) {
+        if (conn.closed) return;
+        conn.closed = true;
+        clearTimeout(conn.handshakeTimer);
+        if (roomApi) roomApi.handleClose(conn);
+        for (const ch of [conn.ctrl, conn.input]) {
+          if (ch) { ch.onmessage = ch.onclose = null; try { ch.close(); } catch (e) { /* ignore */ } }
+        }
+        try { conn.pc.onconnectionstatechange = null; conn.pc.close(); } catch (e) { /* ignore */ }
+        if (rtcPeers.get(conn.peerId) === conn) rtcPeers.delete(conn.peerId);
+      }
+
+      function onPeer(peerId) {
+        const old = rtcPeers.get(peerId);
+        if (old) closePeer(old);
+
+        const pc = new RTCPeerConnection({ iceServers: RTC_ICE_SERVERS });
+        const conn = { role: null, seat: null, peerId: peerId, pc: pc, ctrl: null, input: null, closed: false };
+        rtcPeers.set(peerId, conn);
+        // A phone that vanished before its channels opened would otherwise leak this connection.
+        conn.handshakeTimer = setTimeout(() => {
+          if (!conn.ctrl || conn.ctrl.readyState !== "open") closePeer(conn);
+        }, HANDSHAKE_TIMEOUT_MS);
+
+        pc.ondatachannel = function (ev) {
+          const ch = ev.channel;
+          if (ch.label === "ctrl") {
+            conn.ctrl = ch;
+            ch.onmessage = function (m) {
+              if (typeof m.data !== "string" || !roomApi) return;
+              let msg;
+              try { msg = JSON.parse(m.data); } catch (e) { return; }
+              // A phone must never claim a privileged role — only Unity (unityHostConn) is host.
+              if (msg.type === "host" || msg.type === "spectator" || msg.type === "mode" ||
+                  msg.type === "start" || msg.type === "reset") return;
+              roomApi.handleControlMessage(conn, msg);
+            };
+            ch.onclose = function () { closePeer(conn); };
+          } else if (ch.label === "input") {
+            conn.input = ch;
+            ch.binaryType = "arraybuffer";
+            ch.onmessage = function (m) {
+              if (roomApi && m.data instanceof ArrayBuffer) roomApi.handleInputFrame(conn, new Uint8Array(m.data));
+            };
+          }
+        };
+        pc.onconnectionstatechange = function () {
+          if (pc.connectionState === "failed" || pc.connectionState === "closed") closePeer(conn);
+        };
+        return conn;
+      }
+
+      async function onPeerSignal(peerId, data) {
+        if (!data || data.type !== "offer") return;
+        let conn = rtcPeers.get(peerId);
+        if (!conn) conn = onPeer(peerId);
+        const pc = conn.pc;
+        try {
+          await pc.setRemoteDescription({ type: "offer", sdp: data.sdp });
+          await pc.setLocalDescription(await pc.createAnswer());
+          if (pc.iceGatheringState !== "complete") {
+            await new Promise(function (resolve) {
+              const t = setTimeout(resolve, ICE_GATHER_CAP_MS);
+              pc.onicegatheringstatechange = function () {
+                if (pc.iceGatheringState === "complete") { clearTimeout(t); resolve(); }
+              };
+            });
+          }
+          if (signal && signal.readyState === WebSocket.OPEN) {
+            signal.send(JSON.stringify({ type: "signal", to: peerId, data: { type: "answer", sdp: pc.localDescription.sdp } }));
+          }
+        } catch (e) {
+          closePeer(conn);
+        }
+      }
+
+      function onRegistered(code, secret) {
+        try { sessionStorage.setItem(SESSION_KEY, JSON.stringify({ code: code, secret: secret })); } catch (e) { /* private mode */ }
+        if (!roomApi) {
+          roomApi = window.LanCouchRoom.createRoom({
+            code: code,
+            sendJson: roomSendJson,
+            sendBinary: roomSendBinary,
+            randomToken: function () { return crypto.randomUUID(); },
+          });
+          // Registers Unity as the host conn and pushes the first roster into it.
+          roomApi.handleControlMessage(unityHostConn, { type: "host" });
+        } else {
+          roomApi.room.code = code; // the signaling server issued a fresh code (it lost our room)
+        }
+        roomCode = code;
+        reconnectAttempt = 0;
+        setSignalStatus("ok");
+      }
+
+      function connectSignal() {
+        let saved = null;
+        try { saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch (e) { /* ignore */ }
+        if (roomApi && roomCode && !saved) saved = { code: roomCode, secret: null };
+        let ws;
+        try {
+          ws = new WebSocket(RTC.signalUrl);
+        } catch (e) {
+          scheduleSignalReconnect();
+          return;
+        }
+        signal = ws;
+        ws.onopen = function () {
+          ws.send(JSON.stringify({ type: "host", code: saved && saved.code, secret: saved && saved.secret }));
+        };
+        ws.onmessage = function (ev) {
+          let msg;
+          try { msg = JSON.parse(ev.data); } catch (e) { return; }
+          if (msg.type === "registered") onRegistered(msg.code, msg.secret);
+          else if (msg.type === "peer") onPeer(msg.peerId);
+          else if (msg.type === "signal") onPeerSignal(msg.from, msg.data);
+          // "peerLeft" is deliberately ignored: every phone closes its signaling socket as soon as
+          // its DataChannels open, which is the normal hand-off, not a disconnect.
+        };
+        ws.onclose = function () {
+          if (signal === ws) signal = null;
+          // Existing phones keep playing (they're peer-to-peer); only NEW joins need the server.
+          setSignalStatus(reconnectAttempt >= 3 ? "signal-unreachable" : "reconnecting");
+          scheduleSignalReconnect();
+        };
+        ws.onerror = function () { try { ws.close(); } catch (e) { /* ignore */ } };
+      }
+
+      function scheduleSignalReconnect() {
+        reconnectAttempt++;
+        setTimeout(connectSignal, Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * Math.pow(1.6, reconnectAttempt)));
+      }
+
+      function startRtcHost() {
+        publishJoinInfo(); // "reconnecting", no code yet — Unity shows "connecting…" rather than a blank lobby
+        const script = document.createElement("script");
+        script.src = "room.js";
+        script.onload = connectSignal;
+        script.onerror = function () { console.error("[LanCouch] room.js failed to load — phones can't connect."); };
+        document.head.appendChild(script);
+      }
+
+      // WebGPU needs a secure context. The LAN-relay path additionally needs the page served from
+      // localhost (a LAN IP over http isn't one); a hosted build just needs https.
+      if (!navigator.gpu) {
+        console.error("[LanCouch] This browser has no WebGPU support (navigator.gpu is undefined) — the game will not render.");
+      }
+      if (RTC) {
+        if (!window.isSecureContext) console.error("[LanCouch] WebGPU requires a secure context — serve this page over https (or from localhost).");
+      } else if (location.hostname !== "localhost" && location.hostname !== "127.0.0.1") {
+        console.error("[LanCouch] Open this page at http://localhost — WebGPU requires a secure context, which a plain LAN address (" + location.hostname + ") is not.");
+      }
+
+      window.LanCouchBridge = {
+        hosted: !!RTC,
+        isConnected: function () { return RTC ? roomApi !== null : connected; },
+        getSnapshotTable: function () {
+          const now = performance.now();
+          for (let seat = 0; seat < MAX_SEATS; seat++) {
+            const o = seat * BYTES_PER_SEAT;
+            const stale = lastUpdate[seat] === 0 || (now - lastUpdate[seat]) > STALE_MS;
+            if (stale) {
+              // Zero stick/buttons but PRESERVE press counters — snapping a counter back to 0
+              // would read as a huge spurious burst of presses on the C# side the next time it
+              // legitimately advances. See LanCouchInputSource's class doc for the full reasoning
+              // (this mirrors the server's own zeroInputFrame on a phone disconnect).
+              outTable[o] = seat;
+              outTable[o + 1] = 0;
+              outTable[o + 2] = 0; outTable[o + 3] = 0;
+              outTable[o + 4] = 0; outTable[o + 5] = 0;
+              outTable[o + 6] = rawTable[o + 6];
+              outTable[o + 7] = rawTable[o + 7];
+            } else {
+              outTable.set(rawTable.subarray(o, o + BYTES_PER_SEAT), o);
+            }
+          }
+          return outTable;
+        },
+        sendControl: function (json) {
+          if (RTC) {
+            // Unity's mode/start/reset go straight into the in-tab room as the host conn. Dropped
+            // until the room exists; LanCouchRuntime re-sends "mode" whenever a roster disagrees.
+            if (!roomApi) return;
+            let msg;
+            try { msg = JSON.parse(json); } catch (e) { return; }
+            roomApi.handleControlMessage(unityHostConn, msg);
+            return;
+          }
+          if (ws && ws.readyState === WebSocket.OPEN) ws.send(json);
+        },
+        setUnityInstance: function (instance) {
+          unityInstance = instance;
+          while (pendingControlMessages.length) forwardToUnity(pendingControlMessages.shift());
+          if (RTC && lastJoinInfoJson) forwardToUnity(lastJoinInfoJson);
+        },
+      };
+
+      if (RTC) startRtcHost();
+      else connect();
+    })();
+  </script>
+
+  <script>
+    const buildUrl = "Build";
+    const loaderUrl = buildUrl + "/WebGL.loader.js";
+    const config = {
+      dataUrl: buildUrl + "/WebGL.data",
+      frameworkUrl: buildUrl + "/WebGL.framework.js",
+      codeUrl: buildUrl + "/WebGL.wasm",
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: "Unity Technologies",
+      productName: "Sandbox",
+      productVersion: "1.0"
+    };
+
+    const canvas = document.getElementById("game-canvas");
+    const status = document.getElementById("status");
+    const statusLabel = document.getElementById("status-label");
+    const progressFill = document.getElementById("progress-fill");
+    const errorMessage = document.getElementById("error-message");
+
+    function showError(message) {
+      const text = typeof message === "string" && message.length > 0
+        ? message
+        : "Something went wrong while starting the game.";
+
+      errorMessage.textContent = text;
+      status.classList.add("is-error");
+      status.hidden = false;
+    }
+
+    function updateProgress(progress) {
+      const clampedProgress = Math.max(0, Math.min(1, progress || 0));
+      progressFill.style.transform = "scaleX(" + clampedProgress + ")";
+      statusLabel.textContent = "Loading " + Math.round(clampedProgress * 100) + "%";
+    }
+
+    const loaderScript = document.createElement("script");
+    loaderScript.src = loaderUrl;
+    loaderScript.onload = function () {
+      createUnityInstance(canvas, config, updateProgress)
+        .then(function (instance) {
+          window.unityInstance = instance; // exposed for console debugging, same as any other template could do
+          if (window.LanCouchBridge) window.LanCouchBridge.setUnityInstance(instance);
+          status.hidden = true;
+          canvas.focus();
+        })
+        .catch(showError);
+    };
+    loaderScript.onerror = function () {
+      showError("Build loader could not be loaded.");
+    };
+
+    document.body.appendChild(loaderScript);
+  </script>
+</body>
+</html>

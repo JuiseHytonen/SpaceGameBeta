@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>LanCouch Controller</title>
+<style>
+  :root {
+    --accent: #3B82F6;
+    --bg: #0b0b10;
+    --panel: #16161d;
+    --text: #eee;
+    --muted: #9aa;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; width: 100%; overflow: hidden;
+    background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    /* Kill pinch-zoom, double-tap-zoom, rubber-band scroll, long-press callouts, text selection —
+       this page is a game controller, not a document. */
+    touch-action: none;
+    overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none;
+  }
+  button { font: inherit; }
+
+  .pill {
+    position: fixed; top: max(8px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
+    padding: 4px 12px; border-radius: 999px; font-size: 12px; letter-spacing: .02em;
+    background: rgba(0,0,0,.5); z-index: 50; display: flex; align-items: center; gap: 6px;
+    pointer-events: none;
+  }
+  .pill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #666; }
+  .pill.connected::before { background: #22c55e; }
+  .pill.connecting::before, .pill.reconnecting::before { background: #eab308; animation: pulse 1s infinite; }
+  .pill.lost::before { background: #ef4444; }
+  @keyframes pulse { 50% { opacity: .3; } }
+
+  .screen {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    text-align: center; gap: 16px;
+  }
+  .screen[hidden] { display: none; }
+
+  /* ---- Join screen ---- */
+  #screen-join input {
+    width: 220px; padding: 12px 14px; font-size: 20px; border-radius: 10px; border: 1px solid #333;
+    background: var(--panel); color: var(--text); text-align: center;
+  }
+  #codeInput { text-transform: uppercase; letter-spacing: .3em; font-weight: 700; }
+  #screen-join button {
+    width: 220px; padding: 14px; font-size: 18px; font-weight: 600; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff;
+  }
+  .error { color: #f87171; font-size: 14px; min-height: 1.2em; }
+
+  /* ---- Error screen — shown only once we're sure this is a real failure, not a quick blip
+     (see NEVER_CONNECTED_ATTEMPTS_BEFORE_ERROR below), so a genuinely blank/unreachable page
+     gets an actual explanation instead of leaving the phone showing a static, unexplained page
+     forever. See this file's own doc comment at the top for why a TRULY blank page (the HTML
+     never arriving at all) can never show this — that's the one failure mode nothing here can
+     fix, only the server-side address selection can. */
+  #errorBody { color: var(--muted); font-size: 14px; max-width: 280px; }
+  #screen-error button {
+    width: 220px; padding: 14px; font-size: 18px; font-weight: 600; border-radius: 10px; border: none;
+    background: var(--accent); color: #fff;
+  }
+
+  /* ---- Wait screen ---- */
+  .seat-badge {
+    width: 96px; height: 96px; border-radius: 50%; background: var(--accent);
+    display: flex; align-items: center; justify-content: center; font-size: 40px; font-weight: 700;
+    box-shadow: 0 0 0 6px rgba(255,255,255,.08);
+  }
+  #screen-wait p { color: var(--muted); font-size: 15px; }
+  .name-edit { display: flex; gap: 8px; }
+  .name-edit input {
+    width: 150px; padding: 10px 12px; font-size: 15px; border-radius: 10px; border: 1px solid #333;
+    background: var(--panel); color: var(--text); text-align: center;
+  }
+  .name-edit button {
+    padding: 10px 14px; font-size: 15px; font-weight: 600; border-radius: 10px; border: none;
+    background: #333; color: #fff;
+  }
+  #nameEditStatus { color: var(--muted); font-size: 12px; min-height: 1.2em; margin: 0; }
+  /* Capture-the-flag team picker (shown only while the host says the level is CTF) */
+  #teamPicker { display: flex; flex-direction: column; align-items: center; gap: 10px; margin-top: 8px; }
+  #teamPicker[hidden] { display: none; }
+  #teamLabel { margin: 0; font-size: 16px; font-weight: 600; color: var(--text); }
+  .team-row { display: flex; gap: 12px; }
+  .team-btn {
+    width: 130px; padding: 16px 0; font-size: 18px; font-weight: 700; border-radius: 12px;
+    border: 4px solid transparent; color: #fff; opacity: .55;
+  }
+  .team-btn.blue { background: #2673ff; }
+  .team-btn.red  { background: #ff4033; }
+  .team-btn.picked { opacity: 1; border-color: #fff; }
+
+  /* ---- Play screen: landscape gamepad layout (stick left thumb, buttons right thumb) ---- */
+  #screen-play { flex-direction: row; justify-content: space-between; padding: 0; gap: 0; }
+  .stick-area, .fire-area {
+    flex: 1 1 50%; height: 100%; position: relative;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .stick-base {
+    position: absolute; width: min(42vmin, 200px); height: min(42vmin, 200px); border-radius: 50%;
+    background: rgba(255,255,255,.06); border: 2px solid rgba(255,255,255,.15);
+    transition: opacity .15s;
+  }
+  .stick-base.active { border-color: var(--accent); }
+  .stick-knob {
+    position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; border-radius: 50%;
+    background: var(--accent); transform: translate(-50%, -50%); margin-left: 0; margin-top: 0;
+    transform-origin: center; will-change: transform;
+  }
+  /* stick-knob's transform is set from JS as translate(-50%,-50%) translate(kx,ky) */
+
+  .fire-area { flex-direction: column; gap: 18px; }
+  .fire-btn {
+    position: relative; border: none; border-radius: 50%; color: #fff; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .fire-btn.primary { width: min(34vmin, 160px); height: min(34vmin, 160px); font-size: 20px; background: var(--accent); }
+  .fire-btn.secondary { width: min(20vmin, 96px); height: min(20vmin, 96px); font-size: 13px; background: #333; }
+  .fire-btn:active, .fire-btn.held { filter: brightness(1.3); }
+
+  .charge-ring { position: absolute; inset: -6px; pointer-events: none; }
+  .charge-ring circle {
+    fill: none; stroke: #fff; stroke-width: 4; opacity: .85;
+    stroke-dasharray: 440; stroke-dashoffset: 440; transform: rotate(-90deg); transform-origin: 50% 50%;
+    transition: stroke-dashoffset linear;
+  }
+
+  .fullscreen-btn {
+    position: fixed; bottom: max(8px, env(safe-area-inset-bottom)); right: max(8px, env(safe-area-inset-right));
+    z-index: 50; width: 40px; height: 40px; border-radius: 50%; border: none;
+    background: rgba(255,255,255,.12); color: #fff; font-size: 18px;
+  }
+</style>
+</head>
+<body>
+  <div id="pill" class="pill">connecting</div>
+
+  <div id="screen-join" class="screen">
+    <h1 style="margin:0;font-size:22px;">Join Game</h1>
+    <input id="codeInput" maxlength="4" placeholder="CODE" autocapitalize="characters" autocomplete="off" inputmode="text">
+    <input id="nameInput" maxlength="16" placeholder="Your name (optional)">
+    <button id="joinBtn">Join</button>
+    <div id="joinError" class="error"></div>
+  </div>
+
+  <div id="screen-error" class="screen" hidden>
+    <h1 id="errorHeading" style="margin:0;font-size:20px;">Can't reach the game</h1>
+    <p id="errorBody"></p>
+    <button id="errorRetryBtn">Retry</button>
+  </div>
+
+  <div id="screen-wait" class="screen" hidden>
+    <div id="seatBadge" class="seat-badge">?</div>
+    <p id="waitLabel">Waiting for host to start&hellip;</p>
+    <div class="name-edit">
+      <input id="nameEditInput" maxlength="16" placeholder="Your name">
+      <button id="nameEditBtn">Save</button>
+    </div>
+    <p id="nameEditStatus"></p>
+    <div id="teamPicker" hidden>
+      <p id="teamLabel">Pick your team</p>
+      <div class="team-row">
+        <button id="teamBlueBtn" class="team-btn blue">Blue</button>
+        <button id="teamRedBtn" class="team-btn red">Red</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="screen-play" class="screen" hidden>
+    <div id="stickArea" class="stick-area">
+      <div id="stickBase" class="stick-base">
+        <div id="stickKnob" class="stick-knob"></div>
+      </div>
+    </div>
+    <div id="fireArea" class="fire-area">
+      <button id="primaryBtn" class="fire-btn primary">
+        <svg class="charge-ring" viewBox="0 0 148 148"><circle cx="74" cy="74" r="70"/></svg>
+        Fire
+      </button>
+      <button id="secondaryBtn" class="fire-btn secondary">Laser</button>
+    </div>
+  </div>
+
+  <button id="fullscreenBtn" class="fullscreen-btn" hidden>&#x26F6;</button>
+
+<!-- Hosted-WebGL builds ship a lancouch-config.js next to this page ({signalUrl: "wss://..."}) that
+     switches this page from the LAN relay (WebSocket to the PC) to WebRTC. server.js answers 404
+     for it, so the LAN path never sees a config. -->
+<script src="lancouch-config.js" onerror="void 0"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------------------------------------
+  // Protocol constants — must match tools/lancouch/server.js and
+  // Assets/CollapseGame/LanCouch/LanCouchInputSource.cs exactly.
+  // ------------------------------------------------------------------------------------------
+  const KEEPALIVE_MS = 250;   // resend even with no change after this long, so a silent seat is
+                               // distinguishable from a genuinely centered one
+  const SEND_INTERVAL_MS = 33; // ~30Hz cap on "send on change"
+  const MAX_BUFFERED_BYTES = 256; // ~30 unsent 8-byte frames; beyond this the link is stalled
+
+  const CODE_RE = /^[A-Z0-9]{4}$/;
+
+  const state = {
+    ws: null,
+    code: null,
+    token: localStorage.getItem('lancouch.token') || null,
+    name: localStorage.getItem('lancouch.name') || '',
+    seat: null,
+    color: '#3B82F6',
+    primaryReleases: 0,
+    secondaryReleases: 0,
+    phase: 'join', // 'join' | 'lobby' | 'playing'
+    ctf: false,    // host says the level about to be played is capture-the-flag
+    team: 0,       // 0 = not picked, 1 = Blue, 2 = Red
+    reconnectAttempt: 0,
+    everConnected: false, // true once ws.onopen has fired at least once, ever
+    autoJoin: false,      // true if this session's code came from the QR's #CODE hash, not typed
+  };
+
+  const stick = { x: 0, y: 0 };
+  const buttons = { primary: false, secondary: false };
+
+  // ---- DOM ----
+  const pill = document.getElementById('pill');
+  const screens = {
+    join: document.getElementById('screen-join'),
+    wait: document.getElementById('screen-wait'),
+    play: document.getElementById('screen-play'),
+    error: document.getElementById('screen-error'),
+  };
+  const codeInput = document.getElementById('codeInput');
+  const nameInput = document.getElementById('nameInput');
+  const joinBtn = document.getElementById('joinBtn');
+  const joinError = document.getElementById('joinError');
+  const errorHeading = document.getElementById('errorHeading');
+  const errorBody = document.getElementById('errorBody');
+  const errorRetryBtn = document.getElementById('errorRetryBtn');
+  const seatBadge = document.getElementById('seatBadge');
+  const waitLabel = document.getElementById('waitLabel');
+  const nameEditInput = document.getElementById('nameEditInput');
+  const nameEditBtn = document.getElementById('nameEditBtn');
+  const nameEditStatus = document.getElementById('nameEditStatus');
+  const teamPicker = document.getElementById('teamPicker');
+  const teamLabel = document.getElementById('teamLabel');
+  const teamBlueBtn = document.getElementById('teamBlueBtn');
+  const teamRedBtn = document.getElementById('teamRedBtn');
+  const stickArea = document.getElementById('stickArea');
+  const stickBase = document.getElementById('stickBase');
+  const stickKnob = document.getElementById('stickKnob');
+  const primaryBtn = document.getElementById('primaryBtn');
+  const secondaryBtn = document.getElementById('secondaryBtn');
+  const chargeRing = primaryBtn.querySelector('circle');
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+  nameInput.value = state.name;
+
+  function showScreen(name) {
+    for (const k of Object.keys(screens)) screens[k].hidden = k !== name;
+  }
+
+  // Always resets the join form's own "Connecting…" state (see attemptAutoJoinFromHash) —
+  // every path back to the join screen (a rejection, an error-screen Retry, the initial
+  // no-hash case) needs the button usable again, not just the screen visible.
+  function showJoinScreen() {
+    joinBtn.disabled = false;
+    joinBtn.textContent = 'Join';
+    showScreen('join');
+  }
+
+  function setPill(cls, label) {
+    pill.className = 'pill ' + cls;
+    pill.textContent = label || cls;
+  }
+
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // ------------------------------------------------------------------------------------------
+  // Immersive mode — must be triggered from a user gesture (the Join tap qualifies).
+  // Landscape, not portrait: matches the game's own on-device touch-control convention
+  // (Assets/CollapseGame/Mobile/MobileBootstrap.cs locks to landscape), and a stick+2-buttons
+  // layout reads far more naturally as a horizontal gamepad shape.
+  // ------------------------------------------------------------------------------------------
+  function tryEnterImmersive() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen ? el.requestFullscreen() : Promise.resolve();
+    Promise.resolve(req).catch(() => {}).then(() => {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
+    });
+  }
+  fullscreenBtn.addEventListener('click', tryEnterImmersive);
+
+  let wakeLock = null;
+  async function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen');
+    } catch { /* best-effort only — needs a secure context, which plain LAN http lacks */ }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (state.phase !== 'join') requestWakeLock();
+    // Back from a locked screen / other tab: don't wait out a backoff timer or a dead socket.
+    if (state.everConnected && (!state.ws || state.ws.readyState !== WebSocket.OPEN)) forceReconnect();
+  });
+
+  // ------------------------------------------------------------------------------------------
+  // WebSocket — control plane (JSON) + input plane (binary), see server.js for the full spec.
+  // ------------------------------------------------------------------------------------------
+  function wsUrl() {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return proto + '//' + location.host + '/ws';
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // WebRTC mode (hosted WebGL). The game tab runs the room itself (tools/lancouch/room.js); this
+  // page reaches it through a thin signaling server (tools/lancouch-signal/) that only relays the
+  // SDP handshake, then drops out. RtcPhoneSocket is a WebSocket-shaped facade — readyState, send,
+  // bufferedAmount, close and the four on* handlers — so everything below (hello, ping/pong,
+  // liveness, the input loop) works unchanged on either transport.
+  //   ctrl  channel: reliable + ordered   — JSON control messages (strings)
+  //   input channel: unordered, 0 retries — the 8-byte input frames (a late frame is worthless)
+  // ------------------------------------------------------------------------------------------
+  const RTC_CONFIG = window.LANCOUCH_CONFIG && window.LANCOUCH_CONFIG.signalUrl ? window.LANCOUCH_CONFIG : null;
+  const RTC_CONNECT_TIMEOUT_MS = 10000;
+  const RTC_ICE_GATHER_CAP_MS = 2500;
+  const RTC_ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+  class RtcPhoneSocket {
+    constructor(signalUrl, code) {
+      this.readyState = WebSocket.CONNECTING;
+      this.onopen = this.onmessage = this.onclose = this.onerror = null;
+      this._pc = null;
+      this._ctrl = null;
+      this._input = null;
+      this._sig = null;
+      this._done = false;
+      this._timeout = setTimeout(() => this._fail(), RTC_CONNECT_TIMEOUT_MS);
+
+      let sig;
+      try {
+        sig = new WebSocket(signalUrl);
+      } catch {
+        // Deferred: connect() hasn't attached onclose yet, so a synchronous failure would vanish.
+        setTimeout(() => this._fail(), 0);
+        return;
+      }
+      this._sig = sig;
+      sig.onopen = () => sig.send(JSON.stringify({ type: 'join', code }));
+      sig.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+        if (msg.type === 'joined') this._startOffer();
+        else if (msg.type === 'signal' && msg.data && msg.data.type === 'answer') {
+          if (this._pc) this._pc.setRemoteDescription({ type: 'answer', sdp: msg.data.sdp }).catch(() => this._fail());
+        } else if (msg.type === 'error') this._reject(msg.reason);
+      };
+      sig.onerror = () => this._fail();
+      // A signaling socket closing AFTER the data channels open is the normal hand-off, not a failure.
+      sig.onclose = () => { if (this.readyState === WebSocket.CONNECTING) this._fail(); };
+    }
+
+    get bufferedAmount() { return this._input ? this._input.bufferedAmount : 0; }
+
+    send(data) {
+      if (this.readyState !== WebSocket.OPEN) return;
+      if (typeof data === 'string') {
+        if (this._ctrl.readyState === 'open') this._ctrl.send(data);
+      } else if (this._input.readyState === 'open') {
+        this._input.send(data);
+      }
+    }
+
+    close() {
+      this._teardown();
+      this.readyState = WebSocket.CLOSED;
+    }
+
+    async _startOffer() {
+      try {
+        const pc = new RTCPeerConnection({ iceServers: RTC_ICE_SERVERS });
+        this._pc = pc;
+        const ctrl = pc.createDataChannel('ctrl');
+        const input = pc.createDataChannel('input', { ordered: false, maxRetransmits: 0 });
+        input.binaryType = 'arraybuffer';
+        this._ctrl = ctrl;
+        this._input = input;
+
+        const maybeOpen = () => {
+          if (this._done || ctrl.readyState !== 'open' || input.readyState !== 'open') return;
+          this._done = true;
+          clearTimeout(this._timeout);
+          this.readyState = WebSocket.OPEN;
+          try { this._sig.close(); } catch {} // handshake over — gameplay never touches the server
+          if (this.onopen) this.onopen();
+        };
+        ctrl.onopen = maybeOpen;
+        input.onopen = maybeOpen;
+        ctrl.onmessage = (ev) => { if (this.onmessage && typeof ev.data === 'string') this.onmessage({ data: ev.data }); };
+        ctrl.onclose = () => this._onPeerGone();
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'failed' || pc.connectionState === 'closed') this._onPeerGone();
+        };
+
+        await pc.setLocalDescription(await pc.createOffer());
+        // Non-trickle: wait for candidates (capped) so the whole offer travels in one message.
+        if (pc.iceGatheringState !== 'complete') {
+          await new Promise((resolve) => {
+            const t = setTimeout(resolve, RTC_ICE_GATHER_CAP_MS);
+            pc.onicegatheringstatechange = () => {
+              if (pc.iceGatheringState === 'complete') { clearTimeout(t); resolve(); }
+            };
+          });
+        }
+        this._sig.send(JSON.stringify({ type: 'signal', data: { type: 'offer', sdp: pc.localDescription.sdp } }));
+      } catch {
+        this._fail();
+      }
+    }
+
+    // The room doesn't exist (game closed/reloaded, or a mistyped code). Surfaced the same way the
+    // LAN server's bad-code rejection is, and — like it — without a follow-up close, so the page
+    // doesn't go into its reconnect loop over something retrying can't fix.
+    _reject(reason) {
+      if (this._done) return;
+      this._done = true;
+      clearTimeout(this._timeout);
+      this._teardown();
+      this.readyState = WebSocket.CLOSED;
+      if (this.onmessage) this.onmessage({ data: JSON.stringify({ type: 'rejected', reason: 'bad-code' }) });
+    }
+
+    _fail() {
+      if (this._done) return;
+      this._done = true;
+      this._gone();
+    }
+
+    _onPeerGone() {
+      if (this.readyState === WebSocket.CLOSED) return;
+      this._done = true;
+      this._gone();
+    }
+
+    _gone() {
+      clearTimeout(this._timeout);
+      const wasOpen = this.readyState !== WebSocket.CLOSED;
+      this._teardown();
+      this.readyState = WebSocket.CLOSED;
+      if (wasOpen && this.onclose) this.onclose();
+    }
+
+    _teardown() {
+      for (const ch of [this._ctrl, this._input]) {
+        if (ch) { ch.onopen = ch.onmessage = ch.onclose = null; try { ch.close(); } catch {} }
+      }
+      if (this._pc) { this._pc.onconnectionstatechange = null; try { this._pc.close(); } catch {} }
+      if (this._sig) { this._sig.onopen = this._sig.onmessage = this._sig.onerror = this._sig.onclose = null; try { this._sig.close(); } catch {} }
+      this._ctrl = this._input = this._pc = this._sig = null;
+    }
+  }
+
+  function openSocket() {
+    return RTC_CONFIG ? new RtcPhoneSocket(RTC_CONFIG.signalUrl, state.code) : new WebSocket(wsUrl());
+  }
+
+  function send(obj) {
+    if (state.ws && state.ws.readyState === WebSocket.OPEN) state.ws.send(JSON.stringify(obj));
+  }
+
+  function connect() {
+    setPill('connecting', 'connecting');
+    let ws;
+    try {
+      ws = openSocket();
+    } catch {
+      onConnectFailed();
+      return;
+    }
+    ws.binaryType = 'arraybuffer';
+    state.ws = ws;
+    ws.onopen = () => {
+      setPill('connected', 'connected');
+      state.reconnectAttempt = 0;
+      state.everConnected = true;
+      lastRxAt = performance.now();
+      startLivenessWatchdog();
+      // If we got here via the error screen (a first-connect retry succeeded), get off it —
+      // we're about to send 'hello' and either land on 'seated' or 'rejected' shortly.
+      if (!screens.error.hidden) showJoinScreen();
+      sendHello();
+    };
+    ws.onmessage = (ev) => {
+      lastRxAt = performance.now();
+      if (typeof ev.data === 'string') {
+        try { handleControlMessage(JSON.parse(ev.data)); } catch { /* ignore malformed */ }
+      }
+      // Phones never receive binary frames in this protocol.
+    };
+    ws.onclose = () => { if (state.ws !== ws) return; setPill('lost', 'lost'); onConnectFailed(); };
+    ws.onerror = () => { try { ws.close(); } catch {} };
+  }
+
+  // Liveness watchdog. A Wi-Fi stall leaves the socket "OPEN" from the browser's point of view for
+  // many seconds (TCP retransmit backoff), and the server's protocol-level ping only runs every
+  // 15 s. So: ping the server's app layer once a second and, if nothing at all has come back for
+  // LIVENESS_TIMEOUT_MS, abandon the socket and reconnect instead of queueing input into it.
+  const PING_INTERVAL_MS = 1000;
+  const LIVENESS_TIMEOUT_MS = 3000;
+  let lastRxAt = 0;
+  let livenessTimer = null;
+
+  function startLivenessWatchdog() {
+    if (livenessTimer) return;
+    livenessTimer = setInterval(() => {
+      const ws = state.ws;
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (performance.now() - lastRxAt > LIVENESS_TIMEOUT_MS) { forceReconnect(); return; }
+      send({ type: 'ping' });
+    }, PING_INTERVAL_MS);
+  }
+
+  function forceReconnect() {
+    const old = state.ws;
+    if (old) {
+      // Detach first: close() on a half-dead socket can take a long time to fire onclose, and we
+      // don't want a late onclose racing the replacement connection.
+      old.onopen = old.onmessage = old.onclose = old.onerror = null;
+      try { old.close(); } catch {}
+    }
+    state.ws = null;
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    setPill('lost', 'lost');
+    connect();
+  }
+
+  // A phone that has NEVER connected once needs an actual explanation after a few failed
+  // attempts — not the same quiet "reconnecting" pill used once a connection has already been
+  // established at least once (that path is deliberate: a phone that locks/loses signal
+  // mid-game should recover silently, see LanCouchInputSource's staleness handling on the
+  // Unity side). This is the "loaded but can't connect" half of the blank-page problem — see
+  // this file's own doc comment at the top for the other half (never loaded at all), which
+  // nothing here can detect or fix.
+  // WebRTC attempts already include their own 10 s timeout, so one failure is enough to explain.
+  const NEVER_CONNECTED_ATTEMPTS_BEFORE_ERROR = RTC_CONFIG ? 1 : 3;
+  let reconnectTimer = null;
+
+  function onConnectFailed() {
+    if (!state.everConnected) {
+      state.reconnectAttempt++;
+      if (state.reconnectAttempt >= NEVER_CONNECTED_ATTEMPTS_BEFORE_ERROR) {
+        showConnectError();
+        return; // scheduleReconnect() below still runs on the NEXT failure if Retry is used
+      }
+    }
+    scheduleReconnect();
+  }
+
+  function scheduleReconnect() {
+    state.reconnectAttempt++;
+    const delay = Math.min(5000, 300 * Math.pow(1.6, state.reconnectAttempt));
+    setPill('reconnecting', 'reconnecting');
+    reconnectTimer = setTimeout(connect, delay);
+  }
+
+  function showConnectError() {
+    errorHeading.textContent = "Can't reach the game";
+    errorBody.textContent = RTC_CONFIG
+      ? "Couldn't connect directly to the game. Make sure this phone is on the SAME Wi-Fi as the " +
+        'computer showing the game — guest or "isolated" Wi-Fi, and mobile data, block this.'
+      : 'Tried ' + location.host + ' and got no response after several tries. Make sure this ' +
+        "phone is on the SAME Wi-Fi as the PC — a different network, the PC's firewall, or a " +
+        'guest network that blocks phone-to-PC traffic can all cause this.';
+    errorRetryAction = () => { state.reconnectAttempt = 0; connect(); };
+    showScreen('error');
+    // A background retry keeps trying too (e.g. the network recovers on its own) — Retry just
+    // skips the wait rather than being the only way anything happens again.
+    scheduleReconnect();
+  }
+
+  function showRejectedError(reason) {
+    errorHeading.textContent = 'Could not join';
+    errorBody.textContent = describeRejection(reason);
+    errorRetryAction = () => showJoinScreen();
+    showScreen('error');
+  }
+
+  let errorRetryAction = null;
+  errorRetryBtn.addEventListener('click', () => {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    const action = errorRetryAction;
+    errorRetryAction = null;
+    if (action) action();
+  });
+
+  function sendHello() {
+    if (!state.code) return;
+    send({ type: 'hello', code: state.code, token: state.token || undefined, name: state.name || undefined });
+  }
+
+  function handleControlMessage(msg) {
+    switch (msg.type) {
+      case 'seated':
+        state.seat = msg.seat;
+        state.color = msg.color;
+        state.name = msg.name;
+        state.token = msg.token;
+        state.primaryReleases = msg.primaryReleases || 0;
+        state.secondaryReleases = msg.secondaryReleases || 0;
+        localStorage.setItem('lancouch.token', state.token);
+        localStorage.setItem('lancouch.name', state.name);
+        applyAccent(state.color);
+        seatBadge.textContent = String(state.seat + 1);
+        nameEditInput.value = state.name;
+        nameEditStatus.textContent = '';
+        // The game (level-select screen) starts rounds now — phones only wait, and pick a team
+        // when the level is capture-the-flag.
+        state.ctf = !!msg.ctf;
+        state.team = msg.team || 0;
+        updateTeamUi();
+        updateWaitLabel();
+        state.phase = 'lobby';
+        showScreen('wait');
+        break;
+      case 'renamed':
+        state.name = msg.name;
+        localStorage.setItem('lancouch.name', state.name);
+        nameEditInput.value = state.name;
+        nameEditStatus.textContent = 'Saved';
+        updateWaitLabel();
+        break;
+      case 'started':
+        state.phase = 'playing';
+        showScreen('play');
+        startInputLoop();
+        break;
+      case 'lobby':
+        state.phase = 'lobby';
+        stopInputLoop();
+        showScreen('wait');
+        break;
+      case 'mode':
+        state.ctf = !!msg.ctf;
+        state.team = msg.team !== undefined ? msg.team : state.team;
+        updateTeamUi();
+        updateWaitLabel();
+        break;
+      case 'teamSet':
+        state.team = msg.team || 0;
+        updateTeamUi();
+        updateWaitLabel();
+        break;
+      case 'rejected':
+        // A rejection from an auto-join (QR scan) lands with no code ever having been typed —
+        // showing it as a one-line error above an empty join form (the old behavior) reads as
+        // "the page is broken" rather than "here's what happened". A manually-typed code still
+        // gets the old inline error next to the form it was typed into, so retyping is quick.
+        if (state.autoJoin) {
+          showRejectedError(msg.reason);
+        } else {
+          joinError.textContent = describeRejection(msg.reason);
+          showJoinScreen();
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  function updateWaitLabel() {
+    waitLabel.textContent = state.ctf && !state.team
+      ? state.name + ' — pick your team below.'
+      : state.name + ' — waiting for the game to start…';
+  }
+
+  // Capture the flag: show the Blue/Red picker and highlight the current choice.
+  function updateTeamUi() {
+    teamPicker.hidden = !state.ctf;
+    teamBlueBtn.classList.toggle('picked', state.team === 1);
+    teamRedBtn.classList.toggle('picked', state.team === 2);
+    teamLabel.textContent = state.team === 1 ? 'You are on Blue'
+      : state.team === 2 ? 'You are on Red'
+      : 'Pick your team';
+  }
+
+  function pickTeam(team) {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      waitLabel.textContent = 'Not connected right now — reconnecting… try again in a moment.';
+      return;
+    }
+    send({ type: 'team', team });
+  }
+  teamBlueBtn.addEventListener('click', () => pickTeam(1));
+  teamRedBtn.addEventListener('click', () => pickTeam(2));
+
+  function describeRejection(reason) {
+    if (reason === 'full') return 'Room is full (6 players max).';
+    if (reason === 'started') return 'Round already started — wait for the next one.';
+    return 'Wrong code. Check the screen and try again.';
+  }
+
+  function applyAccent(hex) {
+    document.documentElement.style.setProperty('--accent', hex);
+    seatBadge.style.background = hex;
+  }
+
+  // ------------------------------------------------------------------------------------------
+  // Join flow — a QR scan lands with #CODE in the URL and auto-joins; typing a code is the
+  // fallback for a stale bookmark or an unreadable QR.
+  // ------------------------------------------------------------------------------------------
+  function attemptAutoJoinFromHash() {
+    const hash = (location.hash || '').slice(1).toUpperCase();
+    if (CODE_RE.test(hash)) {
+      state.code = hash;
+      state.autoJoin = true;
+      // Fixes a real gap: this used to call connect() with no visible change at all, so a QR
+      // scan left the phone sitting on an empty-looking Join form with no sign anything had
+      // happened — easily mistaken for "the QR did nothing" rather than "it's connecting".
+      codeInput.value = hash;
+      joinBtn.disabled = true;
+      joinBtn.textContent = 'Connecting…';
+      connect();
+      return true;
+    }
+    return false;
+  }
+
+  joinBtn.addEventListener('click', () => {
+    const code = codeInput.value.trim().toUpperCase();
+    if (!CODE_RE.test(code)) {
+      joinError.textContent = 'Enter the 4-character code shown on the TV.';
+      return;
+    }
+    joinError.textContent = '';
+    state.code = code;
+    state.autoJoin = false; // typed by hand — a rejection should reuse this same form, not the error screen
+    state.name = nameInput.value.trim().slice(0, 16);
+    localStorage.setItem('lancouch.name', state.name);
+    tryEnterImmersive();
+    requestWakeLock();
+    connect();
+  });
+
+  nameEditBtn.addEventListener('click', () => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+      nameEditStatus.textContent = 'Not connected right now — try again in a moment.';
+      return;
+    }
+    const name = nameEditInput.value.trim().slice(0, 16);
+    nameEditStatus.textContent = 'Saving…';
+    send({ type: 'rename', name });
+  });
+
+  if (!attemptAutoJoinFromHash()) {
+    showJoinScreen();
+  } else {
+    tryEnterImmersive();
+    requestWakeLock();
+  }
+  fullscreenBtn.hidden = false;
+
+  // ------------------------------------------------------------------------------------------
+  // Stick — absolute-position: touch-down anywhere in the zone re-centers the base there (not a
+  // fixed-position stick), which is far more forgiving for a thumb that doesn't land exactly on
+  // a drawn circle. Outputs LeftX/LeftY as heading+magnitude in [-1,1], matching how
+  // CouchController.Update reads it (Atan2(y,x) for heading, magnitude rescaled past its own
+  // 0.15 deadzone) — so no deadzone logic is needed here, just a clean, fully-deflectable stick.
+  // ------------------------------------------------------------------------------------------
+  let stickPointerId = null;
+  let stickCenter = { x: 0, y: 0 };
+
+  function beginStick(e) {
+    if (stickPointerId !== null) return;
+    stickPointerId = e.pointerId;
+    stickArea.setPointerCapture(e.pointerId);
+    const rect = stickArea.getBoundingClientRect();
+    const half = stickBase.offsetWidth / 2;
+    const cx = clamp(e.clientX, rect.left + half, rect.right - half);
+    const cy = clamp(e.clientY, rect.top + half, rect.bottom - half);
+    stickCenter = { x: cx, y: cy };
+    stickBase.style.left = (cx - rect.left - half) + 'px';
+    stickBase.style.top = (cy - rect.top - half) + 'px';
+    stickBase.style.position = 'absolute';
+    stickBase.classList.add('active');
+    moveStick(e);
+  }
+
+  function moveStick(e) {
+    if (e.pointerId !== stickPointerId) return;
+    const r = stickBase.offsetWidth / 2;
+    const dx = e.clientX - stickCenter.x;
+    const dy = e.clientY - stickCenter.y;
+    const dist = Math.min(Math.hypot(dx, dy), r);
+    const angle = Math.atan2(dy, dx);
+    const kx = Math.cos(angle) * dist;
+    const ky = Math.sin(angle) * dist;
+    stickKnob.style.transform = 'translate(-50%,-50%) translate(' + kx + 'px,' + ky + 'px)';
+    // Screen Y grows downward; game "up" is positive Y, so negate.
+    stick.x = r > 0 ? kx / r : 0;
+    stick.y = r > 0 ? -ky / r : 0;
+  }
+
+  function endStick(e) {
+    if (e.pointerId !== stickPointerId) return;
+    stickPointerId = null;
+    stick.x = 0; stick.y = 0;
+    stickKnob.style.transform = 'translate(-50%,-50%)';
+    stickBase.classList.remove('active');
+  }
+
+  stickArea.addEventListener('pointerdown', beginStick);
+  stickArea.addEventListener('pointermove', moveStick);
+  stickArea.addEventListener('pointerup', endStick);
+  stickArea.addEventListener('pointercancel', endStick);
+  stickArea.addEventListener('lostpointercapture', endStick);
+
+  // iOS Safari can end a touch (edge swipes, Control Center, multi-finger/system gestures,
+  // page going inactive) without ever delivering pointerup/pointercancel to the page, which
+  // leaves the stick/buttons pinned. Backstops: the touch-level events (touchend/touchcancel
+  // fire reliably with the true remaining finger list) and focus/visibility loss.
+  function releaseAllInputs() {
+    if (stickPointerId !== null) endStick({ pointerId: stickPointerId });
+    setPrimary(false);
+    setSecondary(false);
+  }
+  function reconcileWithTouches(e) {
+    // No finger on the screen at all -> nothing can legitimately still be held.
+    if (e.touches.length === 0) releaseAllInputs();
+  }
+  document.addEventListener('touchend', reconcileWithTouches, { passive: true });
+  document.addEventListener('touchcancel', reconcileWithTouches, { passive: true });
+  window.addEventListener('blur', releaseAllInputs);
+  window.addEventListener('pagehide', releaseAllInputs);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') releaseAllInputs();
+  });
+
+  // ------------------------------------------------------------------------------------------
+  // Fire buttons — report the CURRENT held level (Unity's CouchController does its own
+  // press/release edge detection on that level, exactly like a real gamepad button). The
+  // monotonic RELEASE counters below exist ONLY to survive network coalescing: if a tap starts
+  // and ends between two outgoing frames, the level alone would show "not held" at both frames
+  // and the tap would vanish. LanCouchInputSource (Unity) uses a counter-vs-level state machine
+  // to reconstruct a proper down-then-up edge for CouchController even when that happens — see
+  // its class doc for the exact algorithm, including why the counter increments on RELEASE
+  // rather than on press (counting presses is ambiguous the instant a normally-observed press's
+  // release lands on the same poll its counter advances — the common case, not a corner case).
+  // This page's only job is: increment the counter on every up-edge, and always send the true
+  // current held level.
+  // ------------------------------------------------------------------------------------------
+  let chargeStart = 0;
+  let chargeRaf = null;
+  const CHARGE_MS = 2000; // cosmetic only — mirrors CouchController's LASER_CHARGE_SECONDS
+
+  function tickChargeRing() {
+    const t = clamp((performance.now() - chargeStart) / CHARGE_MS, 0, 1);
+    chargeRing.style.strokeDashoffset = String(440 * (1 - t));
+    if (buttons.primary) chargeRaf = requestAnimationFrame(tickChargeRing);
+  }
+
+  function setPrimary(held) {
+    if (held && !buttons.primary) {
+      chargeStart = performance.now();
+      chargeRing.style.transition = 'none';
+      chargeRing.style.strokeDashoffset = '440';
+      requestAnimationFrame(() => { chargeRing.style.transition = 'stroke-dashoffset linear'; });
+      chargeRaf = requestAnimationFrame(tickChargeRing);
+    }
+    if (!held && buttons.primary) {
+      // Increment on RELEASE, not press — see LanCouchInputSource.cs's class doc for why a
+      // press-counted edge is ambiguous the instant a held-then-released button's release lands
+      // on the same poll its counter advances (the common case, not a corner case).
+      state.primaryReleases = (state.primaryReleases + 1) & 0xff;
+      if (chargeRaf) cancelAnimationFrame(chargeRaf);
+      chargeRing.style.strokeDashoffset = '440';
+    }
+    buttons.primary = held;
+    primaryBtn.classList.toggle('held', held);
+  }
+
+  function setSecondary(held) {
+    if (!held && buttons.secondary) state.secondaryReleases = (state.secondaryReleases + 1) & 0xff;
+    buttons.secondary = held;
+    secondaryBtn.classList.toggle('held', held);
+  }
+
+  primaryBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); primaryBtn.setPointerCapture(e.pointerId); setPrimary(true); });
+  primaryBtn.addEventListener('pointerup', (e) => { e.preventDefault(); setPrimary(false); });
+  primaryBtn.addEventListener('pointercancel', () => setPrimary(false));
+  primaryBtn.addEventListener('lostpointercapture', () => setPrimary(false));
+
+  secondaryBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); secondaryBtn.setPointerCapture(e.pointerId); setSecondary(true); });
+  secondaryBtn.addEventListener('pointerup', (e) => { e.preventDefault(); setSecondary(false); });
+  secondaryBtn.addEventListener('pointercancel', () => setSecondary(false));
+  secondaryBtn.addEventListener('lostpointercapture', () => setSecondary(false));
+
+  // ------------------------------------------------------------------------------------------
+  // Input send loop — on change, coalesced to ~30Hz, with a 250ms keep-alive so a silent seat
+  // (phone locked/backgrounded) is distinguishable server-side from one that is simply centered.
+  // ------------------------------------------------------------------------------------------
+  let inputTimer = null;
+  let lastSentAt = 0;
+  let lastSentKey = null;
+
+  function frameKey() {
+    return stick.x.toFixed(3) + ',' + stick.y.toFixed(3) + ',' + buttons.primary + ',' + buttons.secondary
+      + ',' + state.primaryReleases + ',' + state.secondaryReleases;
+  }
+
+  function buildFrame() {
+    const buf = new ArrayBuffer(8);
+    const view = new DataView(buf);
+    view.setUint8(0, state.seat || 0); // server overwrites this anyway; harmless placeholder
+    let mask = 0;
+    if (buttons.primary) mask |= 1;
+    if (buttons.secondary) mask |= 2;
+    view.setUint8(1, mask);
+    view.setInt16(2, Math.round(clamp(stick.x, -1, 1) * 1000), true);
+    view.setInt16(4, Math.round(clamp(stick.y, -1, 1) * 1000), true);
+    view.setUint8(6, state.primaryReleases & 0xff);
+    view.setUint8(7, state.secondaryReleases & 0xff);
+    return buf;
+  }
+
+  function tickInput() {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    // A backlog in the send buffer means the link is stalled; piling more stale stick/button
+    // frames behind it would replay them as a burst on recovery. Skip, and (because
+    // lastSentKey isn't updated) send the current state as soon as the buffer drains.
+    if (state.ws.bufferedAmount > MAX_BUFFERED_BYTES) return;
+    const now = performance.now();
+    const key = frameKey();
+    if (key !== lastSentKey || now - lastSentAt >= KEEPALIVE_MS) {
+      lastSentKey = key;
+      lastSentAt = now;
+      state.ws.send(buildFrame());
+    }
+  }
+
+  function startInputLoop() {
+    if (inputTimer) return;
+    inputTimer = setInterval(tickInput, SEND_INTERVAL_MS);
+  }
+  function stopInputLoop() {
+    if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
+    stick.x = 0; stick.y = 0; buttons.primary = false; buttons.secondary = false;
+  }
+})();
+</script>
+</body>
+</html>
