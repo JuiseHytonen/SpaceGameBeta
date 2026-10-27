@@ -113,9 +113,9 @@
     </div>
   </div>
 
-  <!-- Hosted builds ship lancouch-config.js ({signalUrl: "wss://..."}), which switches the bridge
-       below from "WebSocket to a LAN relay on this origin" to "this tab IS the room, phones connect
-       over WebRTC via a signaling server". Absent (404) = the original LAN-relay behaviour. -->
+  <!-- Optional lancouch-config.js ({signalUrl: "wss://..."}) overrides the signaling server of the
+       hosted room (this tab IS the room, phones connect over WebRTC). Absent (404) = built-in
+       default server. signalUrl: "" = the original LAN-relay behaviour. -->
   <script src="lancouch-config.js" onerror="void 0"></script>
 
   <script>
@@ -222,7 +222,13 @@
       //   ctrl  (reliable)              JSON control messages  -> room.handleControlMessage
       //   input (unordered, 0 retries)  8-byte input frames    -> room.handleInputFrame
       // and Unity itself is the room's "host" conn, via the local adapter below.
-      const RTC = window.LANCOUCH_CONFIG && window.LANCOUCH_CONFIG.signalUrl ? window.LANCOUCH_CONFIG : null;
+      // A web build is always a hosted room (local multiplayer + QR), even if lancouch-config.js is
+      // missing, stale or wrong. The config only overrides the signaling server; set
+      // signalUrl: "" in it to opt back into the LAN-relay behaviour (WebGL served by tools/lancouch/server.js).
+      const DEFAULT_SIGNAL_URL = "wss://lancouch-signal.onrender.com/signal";
+      const cfgSignalUrl = window.LANCOUCH_CONFIG && typeof window.LANCOUCH_CONFIG.signalUrl === "string"
+        ? window.LANCOUCH_CONFIG.signalUrl.trim() : null;
+      const RTC = cfgSignalUrl === "" ? null : { signalUrl: cfgSignalUrl || DEFAULT_SIGNAL_URL };
       const RTC_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
       const ICE_GATHER_CAP_MS = 2500;
       const HANDSHAKE_TIMEOUT_MS = 20000;
