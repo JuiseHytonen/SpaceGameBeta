@@ -126,8 +126,16 @@
     position: relative; border: none; border-radius: 50%; color: #fff; font-weight: 700;
     display: flex; align-items: center; justify-content: center;
   }
-  .fire-btn.primary { width: min(34vmin, 160px); height: min(34vmin, 160px); font-size: 20px; background: var(--accent); }
-  .fire-btn.secondary { width: min(20vmin, 96px); height: min(20vmin, 96px); font-size: 13px; background: #333; }
+  .fire-btn.primary { width: min(58vmin, 300px); height: min(58vmin, 300px); font-size: 28px; background: var(--accent); }
+  .rotate-overlay {
+    position: fixed; inset: 0; z-index: 100; background: #0b0b10; color: #fff;
+    flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+    text-align: center; font-size: 18px;
+    display: none;
+  }
+  .rotate-icon { font-size: 64px; }
+  /* Only while the play screen is up (body.playing) and the phone is held upright. */
+  @media (orientation: portrait) { body.playing .rotate-overlay { display: flex; } }
   .fire-btn:active, .fire-btn.held { filter: brightness(1.3); }
 
   .charge-ring { position: absolute; inset: -6px; pointer-events: none; }
@@ -189,8 +197,14 @@
         <svg class="charge-ring" viewBox="0 0 148 148"><circle cx="74" cy="74" r="70"/></svg>
         Fire
       </button>
-      <button id="secondaryBtn" class="fire-btn secondary">Laser</button>
     </div>
+  </div>
+
+  <!-- Shown only in portrait while playing: orientation.lock is unsupported on iOS Safari and needs
+       fullscreen elsewhere, so this is the guaranteed fallback for "horizontal only". -->
+  <div id="rotateOverlay" class="rotate-overlay">
+    <div class="rotate-icon">&#x21BB;</div>
+    <p>Rotate your phone to landscape</p>
   </div>
 
   <button id="fullscreenBtn" class="fullscreen-btn" hidden>&#x26F6;</button>
@@ -262,7 +276,6 @@
   const stickBase = document.getElementById('stickBase');
   const stickKnob = document.getElementById('stickKnob');
   const primaryBtn = document.getElementById('primaryBtn');
-  const secondaryBtn = document.getElementById('secondaryBtn');
   const chargeRing = primaryBtn.querySelector('circle');
   const fullscreenBtn = document.getElementById('fullscreenBtn');
 
@@ -270,7 +283,7 @@
 
   function showScreen(name) {
     for (const k of Object.keys(screens)) screens[k].hidden = k !== name;
-  }
+    document.body.classList.toggle('playing', name === 'play');  }
 
   // Always resets the join form's own "Connecting…" state (see attemptAutoJoinFromHash) —
   // every path back to the join screen (a rejection, an error-screen Retry, the initial
@@ -581,7 +594,8 @@
     errorHeading.textContent = "Can't reach the game";
     errorBody.textContent = RTC_CONFIG
       ? "Couldn't connect directly to the game. Make sure this phone is on the SAME Wi-Fi as the " +
-        'computer showing the game — guest or "isolated" Wi-Fi, and mobile data, block this.'
+        'computer showing the game (not a guest Wi-Fi). Still failing? Try switching this phone to ' +
+        "mobile data, or connect the computer and phones to one phone's hotspot."
       : 'Tried ' + location.host + ' and got no response after several tries. Make sure this ' +
         "phone is on the SAME Wi-Fi as the PC — a different network, the PC's firewall, or a " +
         'guest network that blocks phone-to-PC traffic can all cause this.';
@@ -902,21 +916,10 @@
     primaryBtn.classList.toggle('held', held);
   }
 
-  function setSecondary(held) {
-    if (!held && buttons.secondary) state.secondaryReleases = (state.secondaryReleases + 1) & 0xff;
-    buttons.secondary = held;
-    secondaryBtn.classList.toggle('held', held);
-  }
-
   primaryBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); primaryBtn.setPointerCapture(e.pointerId); setPrimary(true); });
   primaryBtn.addEventListener('pointerup', (e) => { e.preventDefault(); setPrimary(false); });
   primaryBtn.addEventListener('pointercancel', () => setPrimary(false));
   primaryBtn.addEventListener('lostpointercapture', () => setPrimary(false));
-
-  secondaryBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); secondaryBtn.setPointerCapture(e.pointerId); setSecondary(true); });
-  secondaryBtn.addEventListener('pointerup', (e) => { e.preventDefault(); setSecondary(false); });
-  secondaryBtn.addEventListener('pointercancel', () => setSecondary(false));
-  secondaryBtn.addEventListener('lostpointercapture', () => setSecondary(false));
 
   // ------------------------------------------------------------------------------------------
   // Input send loop — on change, coalesced to ~30Hz, with a 250ms keep-alive so a silent seat
