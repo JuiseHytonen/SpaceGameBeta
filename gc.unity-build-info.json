@@ -20,7 +20,7 @@
                 "dataCaching": true,
                 "compressionFormat": "Disabled",
                 "exceptionSupport": "ExplicitlyThrownExceptionsOnly",
-                "debugSymbolMode": "Off",
+                "debugSymbolMode": "Embedded",
                 "webAssembly2023": true,
                 "developmentBuild": false,
                 "codeOptimization": "DiskSizeLTO"
@@ -33,13 +33,13 @@
         }
     },
     "buildResult": {
-        "capturedAtUtc": "2026-11-13T18:26:57Z",
+        "capturedAtUtc": "2026-11-13T19:09:35Z",
         "result": "Succeeded",
         "totalSizeBytes": 0,
         "totalTimeSeconds": 0.0,
-        "totalWarnings": 58,
+        "totalWarnings": 7,
         "totalErrors": 0,
-        "guid": "3c6a0d78e9654fc7bff29ed0d5042db0",
+        "guid": "8d1495119f9c49f19ab641a4205bf41e",
         "outputPath": ".",
         "outputPathKind": "buildOutputRelative",
         "outputPathRedacted": false,
