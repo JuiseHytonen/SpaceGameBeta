@@ -135,6 +135,28 @@
     #tip.hide { opacity: 0; }
     #tip b { color: #40c8ff; font-weight: 600; }
 
+    #mobile-note {
+      display: none;
+      margin: 4px 0 0;
+      padding: 12px 14px;
+      border: 1px solid rgba(64, 200, 255, 0.45);
+      border-radius: 10px;
+      background: rgba(64, 200, 255, 0.1);
+      color: #f4f6fa;
+      font-size: 14px;
+      line-height: 20px;
+    }
+
+    #status.is-mobile #mobile-note { display: block; }
+
+    /* Nothing loads on mobile, so no progress UI or tips — just the logo, title and the note. */
+    #status.is-mobile .progress-track,
+    #status.is-mobile #status-label,
+    #status.is-mobile #tip {
+      display: none;
+    }
+
+    #status.is-error #mobile-note,
     #status.is-error .logo,
     #status.is-error .title,
     #status.is-error #tip {
@@ -185,11 +207,21 @@
       <div class="progress-track" aria-hidden="true">
         <div id="progress-fill" class="progress-fill"></div>
       </div>
+      <p id="mobile-note">This is a local multiplayer party game. Load the game in PC and scan QR code with your phones to use them as controllers and play together!</p>
       <p id="status-label">Loading 0%</p>
       <p id="tip"></p>
       <p id="error-message"></p>
     </div>
   </div>
+
+  <script>
+    // Phone/tablet visitors: this page is the PC host (phones are controllers, via c.html and the QR code),
+    // so on mobile we show an explanation and load nothing — no game download, no signaling room.
+    // UA check plus touch-primary check (iPadOS reports a desktop UA). "?mobile=1" forces it for testing.
+    window.IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent)
+      || (navigator.maxTouchPoints > 1 && window.matchMedia("(pointer: coarse)").matches)
+      || /[?&]mobile=1\b/.test(location.search);
+  </script>
 
   <!-- Optional lancouch-config.js ({signalUrl: "wss://..."}) overrides the signaling server of the
        hosted room (this tab IS the room, phones connect over WebRTC). Absent (404) = built-in
@@ -541,7 +573,8 @@
         },
       };
 
-      if (RTC) startRtcHost();
+      if (window.IS_MOBILE) { /* no room on mobile — see IS_MOBILE above */ }
+      else if (RTC) startRtcHost();
       else connect();
     })();
   </script>
@@ -584,6 +617,8 @@
         : "Loading " + Math.round(clampedProgress * 100) + "%";
     }
 
+    if (window.IS_MOBILE) status.classList.add("is-mobile");
+
     const TIPS = [
       "Choose from asteroids, race and capture the flag",
       "Play local multiplayer space party games",
@@ -625,7 +660,7 @@
       showError("Build loader could not be loaded.");
     };
 
-    document.body.appendChild(loaderScript);
+    if (!window.IS_MOBILE) document.body.appendChild(loaderScript);
   </script>
 </body>
 </html>
