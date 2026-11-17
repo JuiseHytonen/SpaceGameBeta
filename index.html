@@ -42,7 +42,8 @@
       display: grid;
       place-items: center;
       padding: 24px;
-      background: #111318;
+      background: radial-gradient(ellipse at 50% 40%, #16204a 0%, #0b1020 70%);
+      overflow: hidden;
       pointer-events: none;
     }
 
@@ -50,14 +51,62 @@
       display: none;
     }
 
+    /* drifting star layers (pure CSS) */
+    .stars {
+      position: absolute;
+      inset: -100px;
+      background-repeat: repeat;
+      opacity: 0.55;
+      animation: drift linear infinite;
+    }
+
+    .stars.a {
+      background-image: radial-gradient(1.5px 1.5px at 20px 30px, #fff, transparent), radial-gradient(1px 1px at 120px 90px, #cfe8ff, transparent), radial-gradient(1.5px 1.5px at 200px 160px, #fff, transparent);
+      background-size: 240px 200px;
+      animation-duration: 60s;
+    }
+
+    .stars.b {
+      background-image: radial-gradient(1px 1px at 60px 50px, #fff, transparent), radial-gradient(1px 1px at 170px 130px, #9fd6ff, transparent);
+      background-size: 160px 160px;
+      animation-duration: 110s;
+      opacity: 0.35;
+    }
+
+    @keyframes drift {
+      to { transform: translate(-240px, 200px); }
+    }
+
     .status-panel {
-      width: min(320px, 100%);
+      position: relative;
+      width: min(340px, 100%);
       display: grid;
-      gap: 12px;
+      gap: 14px;
       text-align: center;
+      justify-items: center;
+    }
+
+    .logo {
+      width: 84px;
+      height: 84px;
+      filter: drop-shadow(0 0 18px rgba(64, 200, 255, 0.55));
+      animation: float 3.2s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      50% { transform: translateY(-6px); }
+    }
+
+    .title {
+      margin: 0;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: 0.28em;
+      text-indent: 0.28em;
     }
 
     .progress-track {
+      width: 100%;
       height: 4px;
       overflow: hidden;
       border-radius: 999px;
@@ -69,8 +118,27 @@
       height: 100%;
       transform: scaleX(0);
       transform-origin: left center;
-      background: #f4f6fa;
+      background: linear-gradient(90deg, #40c8ff, #f4f6fa);
       transition: transform 160ms ease;
+    }
+
+    #tip {
+      min-height: 40px;
+      margin: 10px 0 0;
+      max-width: 300px;
+      color: rgba(244, 246, 250, 0.6);
+      font-size: 13px;
+      line-height: 20px;
+      transition: opacity 0.45s ease;
+    }
+
+    #tip.hide { opacity: 0; }
+    #tip b { color: #40c8ff; font-weight: 600; }
+
+    #status.is-error .logo,
+    #status.is-error .title,
+    #status.is-error #tip {
+      display: none;
     }
 
     #status-label {
@@ -106,11 +174,19 @@
   </div>
 
   <div id="status" role="status" aria-live="polite">
+    <div class="stars a"></div><div class="stars b"></div>
     <div class="status-panel">
+      <!-- Placeholder logo (same ship as the favicon) — swap for real artwork -->
+      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="6" fill="#0b1020" stroke="#40c8ff" stroke-opacity=".4"/>
+        <path d="M16 5l8 20-8-5-8 5z" fill="#40c8ff"/>
+      </svg>
+      <h1 class="title">SPACE GAME</h1>
       <div class="progress-track" aria-hidden="true">
         <div id="progress-fill" class="progress-fill"></div>
       </div>
       <p id="status-label">Loading 0%</p>
+      <p id="tip"></p>
       <p id="error-message"></p>
     </div>
   </div>
@@ -472,11 +548,11 @@
 
   <script>
     const buildUrl = "Build";
-    const loaderUrl = buildUrl + "/9ca31e5a968dc594e65844731b906326.loader.js";
+    const loaderUrl = buildUrl + "/e43578ec266811d6b91f5be6e1c27f73.loader.js";
     const config = {
-      dataUrl: buildUrl + "/1e2e1396b52ea215d5ca6c429ed58094.data",
+      dataUrl: buildUrl + "/27c8beebfc627b4413148186b6b095a2.data",
       frameworkUrl: buildUrl + "/3e9f0a1310a09d79e431c37cd36f7d75.framework.js",
-      codeUrl: buildUrl + "/14221712a04449f023d9c70c1c332fd0.wasm",
+      codeUrl: buildUrl + "/68a130e662200ab75d3c05cd5a0bf31e.wasm",
       streamingAssetsUrl: "StreamingAssets",
       companyName: "Unity Technologies",
       productName: "Sandbox",
@@ -502,8 +578,36 @@
     function updateProgress(progress) {
       const clampedProgress = Math.max(0, Math.min(1, progress || 0));
       progressFill.style.transform = "scaleX(" + clampedProgress + ")";
-      statusLabel.textContent = "Loading " + Math.round(clampedProgress * 100) + "%";
+      // The loader's progress stops near 0.9; the rest is wasm compile + first scene Awake.
+      statusLabel.textContent = clampedProgress >= 0.9
+        ? "Starting engine…"
+        : "Loading " + Math.round(clampedProgress * 100) + "%";
     }
+
+    const TIPS = [
+      "Choose from asteroids, race and capture the flag",
+      "Play local multiplayer space party games",
+      "Make your own levels with a damn cool editor and play them with friends",
+      "One player games compete for high scores per level",
+      "<b>Tip</b> · Fly with arrow keys, fire with Space.",
+      "<b>Tip</b> · Phones can join as controllers — scan the QR code in the lobby.",
+      "<b>Tip</b> · Break glass blocks with repeated hits; ten and they shatter.",
+      "<b>Tip</b> · Hit the button block to start a parked machine.",
+      "<b>Tip</b> · Portals teleport your ship — you exit facing the way you flew in.",
+      "<b>Tip</b> · In Capture the Flag, the carrier scores a point every second."
+    ];
+    const tipEl = document.getElementById("tip");
+    let tipIndex = 0;
+    tipEl.innerHTML = TIPS[0];
+    const tipTimer = setInterval(function () {
+      if (status.hidden) { clearInterval(tipTimer); return; }
+      tipEl.classList.add("hide");
+      setTimeout(function () {
+        tipIndex = (tipIndex + 1) % TIPS.length;
+        tipEl.innerHTML = TIPS[tipIndex];
+        tipEl.classList.remove("hide");
+      }, 450);
+    }, 3500);
 
     const loaderScript = document.createElement("script");
     loaderScript.src = loaderUrl;
