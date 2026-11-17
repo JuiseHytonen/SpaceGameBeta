@@ -33,13 +33,13 @@
         }
     },
     "buildResult": {
-        "capturedAtUtc": "2026-11-15T14:59:23Z",
+        "capturedAtUtc": "2026-11-17T16:59:11Z",
         "result": "Succeeded",
         "totalSizeBytes": 0,
         "totalTimeSeconds": 0.0,
-        "totalWarnings": 56,
+        "totalWarnings": 102,
         "totalErrors": 0,
-        "guid": "5c50f16c22904f3eb8efda4a4d1cfad7",
+        "guid": "e2f6eead35bd473490c312e3a6a2c78a",
         "outputPath": ".",
         "outputPathKind": "buildOutputRelative",
         "outputPathRedacted": false,
