@@ -81,7 +81,9 @@
   #screen-wait p { color: var(--muted); font-size: 15px; }
   .name-edit { display: flex; gap: 8px; }
   .name-edit input {
-    width: 150px; padding: 10px 12px; font-size: 15px; border-radius: 10px; border: 1px solid #333;
+    /* >= 16px: iOS Safari auto-zooms the page when a smaller input is focused, and ignores
+       user-scalable=no, so the controller would stay zoomed after editing the name. */
+    width: 150px; padding: 10px 12px; font-size: 16px; border-radius: 10px; border: 1px solid #333;
     background: var(--panel); color: var(--text); text-align: center;
   }
   .name-edit button {
@@ -317,6 +319,19 @@
     });
   }
   fullscreenBtn.addEventListener('click', tryEnterImmersive);
+
+  // iOS Safari ignores user-scalable=no / touch-action for pinch and double-tap zoom. Block the
+  // legacy gesture events, and re-assert the viewport when a field loses focus so any zoom
+  // that did slip through is reset.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(t =>
+    document.addEventListener(t, e => e.preventDefault(), { passive: false }));
+  document.addEventListener('focusout', () => {
+    const vp = document.querySelector('meta[name=viewport]');
+    if (!vp) return;
+    const c = vp.getAttribute('content');
+    vp.setAttribute('content', c + ', minimum-scale=1');
+    setTimeout(() => vp.setAttribute('content', c), 300);
+  });
 
   let wakeLock = null;
   async function requestWakeLock() {
