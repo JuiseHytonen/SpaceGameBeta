@@ -8,7 +8,7 @@
         "gameProtocolVersion": 1
     },
     "buildEnvironment": {
-        "unityEditorVersion": "6000.7.0b5",
+        "unityEditorVersion": "6000.7.0b10",
         "target": "WebGL",
         "targetGroup": "WebGL",
         "webGL": {
@@ -33,13 +33,13 @@
         }
     },
     "buildResult": {
-        "capturedAtUtc": "2026-11-19T19:49:54Z",
+        "capturedAtUtc": "2026-11-20T21:51:45Z",
         "result": "Succeeded",
         "totalSizeBytes": 0,
         "totalTimeSeconds": 0.0,
-        "totalWarnings": 56,
+        "totalWarnings": 70,
         "totalErrors": 0,
-        "guid": "da4d0da9269c4b1d98e854788e3b3ca1",
+        "guid": "5dde490895bb45c5906d8d4040271da7",
         "outputPath": ".",
         "outputPathKind": "buildOutputRelative",
         "outputPathRedacted": false,
