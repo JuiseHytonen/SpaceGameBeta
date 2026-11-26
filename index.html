@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Spacemaker</title>
   <!-- Inline icon so browsers don't request (and 404 on) /favicon.ico -->
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b1020'/%3E%3Cpath d='M16 5l8 20-8-5-8 5z' fill='%2340c8ff'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M32 3L39 24 60 41v7L40 43l-4 10h-8l-4-10L4 48v-7l21-17z' fill='%237fd8ff'/%3E%3Cellipse cx='32' cy='22' rx='3.6' ry='6.5' fill='%230b1b3a'/%3E%3C/svg%3E">
   <style>
     html,
     body {
@@ -185,11 +185,6 @@
   <div id="status" role="status" aria-live="polite">
     <canvas id="starfield"></canvas><div id="rocks"></div>
     <div class="status-panel">
-      <!-- Placeholder logo (same ship as the favicon) — swap for real artwork -->
-      <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="6" fill="#0b1020" stroke="#40c8ff" stroke-opacity=".4"/>
-        <path d="M16 5l8 20-8-5-8 5z" fill="#40c8ff"/>
-      </svg>
       <h1 class="title">SPACEMAKER</h1>
       <div class="progress-track" aria-hidden="true">
         <div id="progress-fill" class="progress-fill"></div>
@@ -200,6 +195,55 @@
       <p id="error-message"></p>
     </div>
   </div>
+
+  <script>
+    // Loader backdrop: Unity-style starfield + a few drifting asteroid PNGs.
+    (function () {
+      var cv = document.getElementById("starfield"), rocks = document.getElementById("rocks");
+      if (!cv) return;
+      function stars() {
+        var w = cv.width = innerWidth, h = cv.height = innerHeight, g = cv.getContext("2d");
+        g.clearRect(0, 0, w, h);
+        var n = Math.round(w * h / 900);
+        for (var i = 0; i < n; i++) {
+          var r = Math.random(), a = r < 0.9 ? 0.25 + Math.random() * 0.45 : 0.75 + Math.random() * 0.25;
+          var sz = r < 0.97 ? 1 : 1.6, t = Math.random();
+          g.fillStyle = "rgba(" + (t < 0.15 ? "190,215,255" : t < 0.25 ? "255,235,210" : "255,255,255") + "," + a + ")";
+          g.fillRect(Math.random() * w, Math.random() * h, sz, sz);
+        }
+      }
+      stars();
+      addEventListener("resize", stars);
+      var files = ["asteroid1.png", "asteroid2.png", "asteroid3.png"], list = [];
+      for (var i = 0; i < 13; i++) {
+        var el = new Image();
+        el.src = files[i % 3];
+        el.className = "rock";
+        el.draggable = false;
+        rocks.appendChild(el);
+        list.push({
+          el: el, scale: 0.4 + Math.random() * 0.7,
+          x: Math.random() * innerWidth, y: Math.random() * innerHeight,
+          vx: (Math.random() < 0.5 ? -1 : 1) * (6 + Math.random() * 14), vy: (Math.random() - 0.5) * 10,
+          rot: Math.random() * 360, vr: (Math.random() - 0.5) * 14
+        });
+      }
+      var last = performance.now();
+      function tick(now) {
+        var dt = Math.min(0.1, (now - last) / 1000); last = now;
+        var W = innerWidth, H = innerHeight;
+        for (var i = 0; i < list.length; i++) {
+          var r = list[i];
+          r.x += r.vx * dt; r.y += r.vy * dt; r.rot += r.vr * dt;
+          if (r.x < -120) r.x = W + 100; else if (r.x > W + 120) r.x = -100;
+          if (r.y < -120) r.y = H + 100; else if (r.y > H + 120) r.y = -100;
+          r.el.style.transform = "translate(" + r.x.toFixed(1) + "px," + r.y.toFixed(1) + "px) rotate(" + r.rot.toFixed(1) + "deg) scale(" + r.scale.toFixed(2) + ")";
+        }
+        if (!document.getElementById("status").hidden) requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    })();
+  </script>
 
   <script>
     // Phone/tablet visitors: this page is the PC host (phones are controllers, via c.html and the QR code),
