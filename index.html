@@ -745,6 +745,26 @@
       const btn = document.getElementById("try-mobile");
       const note = document.getElementById("try-mobile-note");
       if (!window.IS_MOBILE || !btn) return;
+      if (/[?&]debug=1/.test(location.search)) {
+        // Opt-in on-screen console for phones (no devtools): last lines of log/warn/error.
+        const box = document.createElement("pre");
+        box.style.cssText = "position:fixed;left:0;right:0;bottom:0;max-height:45vh;overflow:auto;margin:0;padding:6px;font:11px/1.3 monospace;color:#9f9;background:rgba(0,0,0,.75);z-index:99999;white-space:pre-wrap;pointer-events:none";
+        document.body.appendChild(box);
+        const lines = [];
+        const push = function (tag, args) {
+          lines.push(tag + Array.prototype.map.call(args, function (a) { try { return typeof a === "string" ? a : (a && a.stack) || JSON.stringify(a); } catch (e) { return String(a); } }).join(" "));
+          if (lines.length > 40) lines.shift();
+          box.textContent = lines.join("\n");
+          box.scrollTop = box.scrollHeight;
+        };
+        ["log", "warn", "error"].forEach(function (k) {
+          const orig = console[k];
+          console[k] = function () { push(k === "log" ? "" : k.toUpperCase() + ": ", arguments); orig.apply(console, arguments); };
+        });
+        window.addEventListener("error", function (e) { push("ERR: ", [e.message + " @" + (e.filename || "") + ":" + e.lineno]); });
+        window.addEventListener("unhandledrejection", function (e) { push("REJ: ", [e.reason]); });
+        push("", ["debug on; dpr=" + window.devicePixelRatio + " inner=" + innerWidth + "x" + innerHeight + " mem=" + (navigator.deviceMemory || "?") + "GB"]);
+      }
 
       function blockWith(msg) {
         btn.disabled = true;
