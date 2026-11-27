@@ -136,6 +136,47 @@
 
     #status.is-mobile #mobile-note { display: block; }
 
+    /* "Try it on this phone": starts the single-player mobile flow in the browser. */
+    #try-mobile {
+      display: none;
+      margin: 6px 0 0;
+      padding: 12px 22px;
+      border: 0;
+      border-radius: 999px;
+      background: #40c8ff;
+      color: #06121f;
+      font: inherit;
+      font-size: 15px;
+      font-weight: 700;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+
+    #try-mobile:disabled { background: rgba(244, 246, 250, 0.2); color: rgba(244, 246, 250, 0.6); cursor: default; }
+    #status.is-mobile #try-mobile { display: inline-block; }
+    #try-mobile-note { display: none; margin: 0; color: #ffb4a8; font-size: 13px; line-height: 18px; }
+    #status.is-mobile #try-mobile-note.show { display: block; }
+
+    /* Mobile play is landscape-only: cover the game with a prompt while the phone is upright. */
+    #rotate-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      place-items: center;
+      padding: 24px;
+      background: #000;
+      text-align: center;
+      font-size: 18px;
+    }
+
+    @media (orientation: portrait) {
+      body.mobile-play #rotate-overlay { display: grid; }
+    }
+
+    body.mobile-play,
+    body.mobile-play #game-canvas { touch-action: none; -webkit-user-select: none; user-select: none; }
+
     /* Nothing loads on mobile, so no progress UI or tips — just the logo, title and the note. */
     #status.is-mobile .progress-track,
     #status.is-mobile #status-label,
@@ -190,11 +231,15 @@
         <div id="progress-fill" class="progress-fill"></div>
       </div>
       <p id="mobile-note">This is a local multiplayer party game. Load this web page on PC and scan QR code with your phones to use them as controllers and play together directly on browser, no installs needed!</p>
+      <button id="try-mobile" type="button">Try it on this phone</button>
+      <p id="try-mobile-note"></p>
       <p id="status-label">Loading 0%</p>
       <p id="tip"></p>
       <p id="error-message"></p>
     </div>
   </div>
+
+  <div id="rotate-overlay" role="alert">Rotate your phone to landscape to play</div>
 
   <script>
     // Loader backdrop: Unity-style starfield + a few drifting asteroid PNGs.
@@ -612,11 +657,11 @@
 
   <script>
     const buildUrl = "Build";
-    const loaderUrl = buildUrl + "/b20bf143073ddc22c8cd11a241fec015.loader.js";
+    const loaderUrl = buildUrl + "/faf49427e4e282cd1088f222ebab2ec6.loader.js";
     const config = {
-      dataUrl: buildUrl + "/2d201f8f909970d6e3e4c39a6565f9bf.data",
-      frameworkUrl: buildUrl + "/7c2d209084d7e5e4c3d89aee132c547e.framework.js",
-      codeUrl: buildUrl + "/fbbc91da89e22ba3112009bf4ffe7307.wasm",
+      dataUrl: buildUrl + "/6496c2fe1887e3d351a36ffadc3c2604.data",
+      frameworkUrl: buildUrl + "/f4889de592aec7f92d0674c5e3ba11da.framework.js",
+      codeUrl: buildUrl + "/a13c529de180cc521b69940b9d0b5c80.wasm",
       streamingAssetsUrl: "StreamingAssets",
       companyName: "Unity Technologies",
       productName: "Sandbox",
@@ -692,6 +737,46 @@
     };
 
     if (!window.IS_MOBILE) document.body.appendChild(loaderScript);
+
+    // Phones: the game normally needs a PC host, but "Try it on this phone" loads the same build and
+    // runs the single-player mobile flow (touch joystick, level select, bots). Unity reads
+    // window.MOBILE_PLAY through MobileWeb.jslib -> MobilePlatform.IsActive.
+    (function () {
+      const btn = document.getElementById("try-mobile");
+      const note = document.getElementById("try-mobile-note");
+      if (!window.IS_MOBILE || !btn) return;
+
+      if (!navigator.gpu || !window.isSecureContext) {
+        btn.disabled = true;
+        note.textContent = "This browser can't run the game (it needs WebGPU). Try a recent Chrome.";
+        note.classList.add("show");
+        return;
+      }
+
+      btn.addEventListener("click", function () {
+        btn.disabled = true;
+        window.MOBILE_PLAY = true;
+        document.body.classList.add("mobile-play");
+
+        // Both must be requested from this click. Neither is supported everywhere (iOS Safari has
+        // neither), hence the swallowed errors and the portrait overlay as the fallback.
+        try {
+          const el = document.documentElement;
+          const fs = el.requestFullscreen ? el.requestFullscreen() : null;
+          const lock = function () {
+            if (screen.orientation && screen.orientation.lock) return screen.orientation.lock("landscape");
+          };
+          if (fs && fs.then) fs.then(lock).catch(function () { /* ignore */ }); else lock();
+        } catch (e) { /* ignore */ }
+
+        // Phones render at DPR 2-3; that's too heavy for the canvas, so cap it.
+        config.devicePixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+
+        // Show the normal loading UI instead of the "use a PC" note.
+        status.classList.remove("is-mobile");
+        document.body.appendChild(loaderScript);
+      });
+    })();
   </script>
 </body>
 </html>
