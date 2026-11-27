@@ -746,12 +746,37 @@
       const note = document.getElementById("try-mobile-note");
       if (!window.IS_MOBILE || !btn) return;
 
-      if (!navigator.gpu || !window.isSecureContext) {
+      function blockWith(msg) {
         btn.disabled = true;
-        note.textContent = "This browser can't run the game (it needs WebGPU). Try a recent Chrome.";
+        note.textContent = msg;
         note.classList.add("show");
+      }
+
+      if (!navigator.gpu || !window.isSecureContext) {
+        blockWith("This browser can't run the game (it needs WebGPU). Try a recent Chrome.");
         return;
       }
+
+      // navigator.gpu existing is not enough: many Android phones expose it but hand back no adapter
+      // (or fail device creation), and Unity then starts silently and shows a black canvas.
+      btn.disabled = true;
+      navigator.gpu.requestAdapter().then(function (adapter) {
+        if (!adapter) { blockWith("This phone's GPU isn't supported by WebGPU, so the game can't run here."); return; }
+        return adapter.requestDevice().then(function (device) {
+          try { device.destroy(); } catch (e) { /* ignore */ }
+          btn.disabled = false;
+        });
+      }).catch(function (e) {
+        blockWith("WebGPU failed to start on this phone (" + (e && e.message ? e.message : e) + ").");
+      });
+
+      // Phones have no console: surface startup errors on screen instead of a bare black canvas.
+      window.addEventListener("error", function (e) {
+        if (document.body.classList.contains("mobile-play") && !status.hidden) showError(String(e.message || "Startup error"));
+      });
+      window.addEventListener("unhandledrejection", function (e) {
+        if (document.body.classList.contains("mobile-play") && !status.hidden) showError(String((e.reason && e.reason.message) || e.reason || "Startup error"));
+      });
 
       btn.addEventListener("click", function () {
         btn.disabled = true;
